@@ -46,8 +46,8 @@ async def async_setup_entry(hass: HomeAssistant, entry):
                 blocking=False,
             )
 
-    hass.services.async_register(DOMAIN,"upsert_rule",upsert,schema=vol.Schema({vol.Required("rule_json"):cv.string}))
-    hass.services.async_register(DOMAIN,"remove_rule",remove,schema=vol.Schema({vol.Required("rule_id"):cv.string}))
+    hass.services.async_register(DOMAIN,"upsert_rule",upsert,schema=vol.Schema({vol.Required("rule_json"):cv.string,vol.Optional("entity_id"):cv.string}))
+    hass.services.async_register(DOMAIN,"remove_rule",remove,schema=vol.Schema({vol.Required("rule_id"):cv.string,vol.Optional("entity_id"):cv.string}))
     hass.services.async_register(DOMAIN,"set_helper",set_helper,schema=vol.Schema({vol.Required("entity_id"):cv.string,vol.Required("state"):cv.string}))
     entry.async_on_unload(hass.bus.async_listen("state_changed",state_changed))
     return True
