@@ -1,0 +1,26 @@
+upsert_rule:
+  name: Install or update rule
+  fields:
+    rule_json:
+      required: true
+      selector:
+        text:
+          multiline: true
+remove_rule:
+  name: Remove rule
+  fields:
+    rule_id:
+      required: true
+      selector:
+        text:
+set_helper:
+  name: Set Elysium helper
+  fields:
+    entity_id:
+      required: true
+      selector:
+        text:
+    state:
+      required: true
+      selector:
+        text:
