@@ -54,6 +54,7 @@ async def async_setup_entry(hass: HomeAssistant, entry):
         entity = hass.data[DOMAIN]["entities"].get(helper_id)
         if is_new or entity is None:
             hass.data[DOMAIN]["add_toggle_helper"](record)
+            await hass.async_block_till_done()
         else:
             entity._record.update(record)
             entity._attr_name = record["name"]
