@@ -47,3 +47,27 @@ set_helper:
       required: true
       selector:
         text:
+set_agent_token:
+  name: Set hub token
+  description: >-
+    Stores the credential this hub uses to fetch work from the Elysium
+    backend. Sent by the mobile app after pairing; the execution loop starts
+    without a restart. Base URLs are optional and only needed to point the hub
+    at a non-production environment.
+  fields:
+    agent_token:
+      required: true
+      selector:
+        text:
+    integration_base_url:
+      required: false
+      selector:
+        text:
+    reward_base_url:
+      required: false
+      selector:
+        text:
+    behavior_base_url:
+      required: false
+      selector:
+        text:

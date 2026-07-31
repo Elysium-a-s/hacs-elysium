@@ -128,6 +128,39 @@ async def async_setup_entry(hass: HomeAssistant, entry):
         await helper_store.async_save(helpers)
         entity.apply_record(record)
 
+    async def set_agent_token(call: ServiceCall):
+        """Prijme credential, ktorým si hub pýta prácu z backendu (ELYSIUM-58).
+
+        Volá to mobilná appka po spárovaní jednotky, tou istou cestou, akou
+        sem posiela pravidlá a helpery. Predtým sa token prepisoval ručne cez
+        Configure — najkrehkejší krok onboardingu, po ktorom relock ticho
+        nefungoval, ak ho používateľ nedokončil.
+
+        Zapisuje sa do config entry, nie do pamäte: inak by sa po reštarte HA
+        stratil a hub by prestal pracovať bez zjavného dôvodu. Zápis spustí
+        update listener, ktorý entry znova načíta a rozbehne slučku — bez
+        reštartu.
+        """
+        token = str(call.data["agent_token"]).strip()
+        if not token:
+            raise ValueError("agent_token must not be empty")
+
+        updates = {**entry.data, CONF_AGENT_TOKEN: token}
+
+        # Adresy sú voliteľné a appka ich posiela preto, aby hub hovoril s tým
+        # istým prostredím ako ona. Bez toho by build namierený na staging
+        # (ELYSIUM-47) nechal hub pollovať produkciu.
+        for field, key in (
+            ("integration_base_url", CONF_INTEGRATION_URL),
+            ("reward_base_url", CONF_REWARD_URL),
+            ("behavior_base_url", CONF_BEHAVIOR_URL),
+        ):
+            value = str(call.data.get(field, "")).strip()
+            if value:
+                updates[key] = value
+
+        hass.config_entries.async_update_entry(entry, data=updates)
+
     async def state_changed(event: Event):
         new = event.data.get("new_state")
         if new is None:
@@ -156,8 +189,19 @@ async def async_setup_entry(hass: HomeAssistant, entry):
     hass.services.async_register(DOMAIN, "create_helper", create_helper, schema=vol.Schema({vol.Required("helper_json"): cv.string, vol.Optional("entity_id"): cv.string}))
     hass.services.async_register(DOMAIN, "update_helper", update_helper, schema=vol.Schema({vol.Required("helper_json"): cv.string, vol.Optional("entity_id"): cv.string}))
     hass.services.async_register(DOMAIN, "delete_helper", delete_helper, schema=vol.Schema({vol.Required("helper_id"): cv.string, vol.Optional("entity_id"): cv.string}))
+    hass.services.async_register(DOMAIN, "set_agent_token", set_agent_token, schema=vol.Schema({
+        vol.Required("agent_token"): cv.string,
+        vol.Optional("integration_base_url"): cv.string,
+        vol.Optional("reward_base_url"): cv.string,
+        vol.Optional("behavior_base_url"): cv.string,
+        vol.Optional("entity_id"): cv.string,
+    }))
     hass.services.async_register(DOMAIN, "set_helper", set_helper, schema=vol.Schema({vol.Required("helper_id"): cv.string, vol.Required("state"): cv.string, vol.Optional("entity_id"): cv.string}))
     entry.async_on_unload(hass.bus.async_listen("state_changed", state_changed))
+    # Registruje sa nepodmienene. Keď visel až za kontrolou tokenu, hub bez
+    # tokenu ho nikdy nedostal — a práve ten je príjemcom set_agent_token,
+    # takže by sa slučka rozbehla až po reštarte HA.
+    entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
     await _async_start_execution(hass, entry)
     return True
 
@@ -193,7 +237,6 @@ async def _async_start_execution(hass: HomeAssistant, entry) -> None:
     # backend dole, komponent musí ďalej obsluhovať pravidlá a helpery
     # lokálne — to je práve to, čo na Home Assistante funguje bez internetu.
     await coordinator.async_refresh()
-    entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
 
 
 async def _async_reload_entry(hass: HomeAssistant, entry) -> None:
@@ -203,7 +246,7 @@ async def async_unload_entry(hass: HomeAssistant, entry):
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if not unloaded:
         return False
-    for service in ("upsert_rule", "remove_rule", "create_helper", "update_helper", "delete_helper", "set_helper"):
+    for service in ("upsert_rule", "remove_rule", "create_helper", "update_helper", "delete_helper", "set_helper", "set_agent_token"):
         hass.services.async_remove(DOMAIN, service)
     hass.data.pop(DOMAIN, None)
     return True
