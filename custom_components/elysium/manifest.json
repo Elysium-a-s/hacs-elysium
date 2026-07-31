@@ -1,7 +1,7 @@
 {
   "domain": "elysium",
   "name": "Elysium",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "documentation": "https://github.com/Elysium-a-s/FastAPI-module",
   "codeowners": [],
   "iot_class": "local_push",

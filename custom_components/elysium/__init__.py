@@ -1,11 +1,29 @@
 import json
+import logging
 from homeassistant.core import HomeAssistant, ServiceCall, Event
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers import config_validation as cv
 from homeassistant.util import slugify
 import voluptuous as vol
-from .const import DOMAIN, RULES_STORAGE_KEY, HELPERS_STORAGE_KEY, STORAGE_VERSION
+from .api import ElysiumApi
+from .const import (
+    CONF_AGENT_TOKEN,
+    CONF_BEHAVIOR_URL,
+    CONF_INTEGRATION_URL,
+    CONF_REWARD_URL,
+    DEFAULT_BEHAVIOR_URL,
+    DEFAULT_INTEGRATION_URL,
+    DEFAULT_REWARD_URL,
+    DOMAIN,
+    RULES_STORAGE_KEY,
+    HELPERS_STORAGE_KEY,
+    STORAGE_VERSION,
+)
+from .coordinator import ElysiumExecutionCoordinator
 from .helper_base import DOMAIN_BY_TYPE
+
+_LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = ["switch", "number", "select", "text", "button", "sensor"]
 
@@ -140,7 +158,46 @@ async def async_setup_entry(hass: HomeAssistant, entry):
     hass.services.async_register(DOMAIN, "delete_helper", delete_helper, schema=vol.Schema({vol.Required("helper_id"): cv.string, vol.Optional("entity_id"): cv.string}))
     hass.services.async_register(DOMAIN, "set_helper", set_helper, schema=vol.Schema({vol.Required("helper_id"): cv.string, vol.Required("state"): cv.string, vol.Optional("entity_id"): cv.string}))
     entry.async_on_unload(hass.bus.async_listen("state_changed", state_changed))
+    await _async_start_execution(hass, entry)
     return True
+
+
+async def _async_start_execution(hass: HomeAssistant, entry) -> None:
+    """Spustí vykonávaciu slučku, ak má jednotka agent token (ELYSIUM-42).
+
+    Bez tokenu komponent funguje ako doteraz — prijíma pravidlá a helpery —
+    len nevykonáva relock ani čakajúce akcie. Inštalácie spárované pred
+    ELYSIUM-42 sú presne v tomto stave, kým im appka token nedoplní.
+    """
+    config = {**entry.data, **entry.options}
+    agent_token = (config.get(CONF_AGENT_TOKEN) or "").strip()
+    if not agent_token:
+        _LOGGER.info(
+            "Elysium: no agent token configured, execution loop stays off. "
+            "Pair this hub from the mobile app to enable reward relock."
+        )
+        return
+
+    api = ElysiumApi(
+        session=async_get_clientsession(hass),
+        integration_base_url=config.get(CONF_INTEGRATION_URL) or DEFAULT_INTEGRATION_URL,
+        reward_base_url=config.get(CONF_REWARD_URL) or DEFAULT_REWARD_URL,
+        behavior_base_url=config.get(CONF_BEHAVIOR_URL) or DEFAULT_BEHAVIOR_URL,
+        agent_token=agent_token,
+    )
+    coordinator = ElysiumExecutionCoordinator(hass, api)
+    hass.data[DOMAIN]["coordinator"] = coordinator
+
+    # Zámerne async_refresh a nie async_config_entry_first_refresh: tá druhá
+    # pri zlyhaní zdvihne ConfigEntryNotReady a zhodí celý setup. Keď je
+    # backend dole, komponent musí ďalej obsluhovať pravidlá a helpery
+    # lokálne — to je práve to, čo na Home Assistante funguje bez internetu.
+    await coordinator.async_refresh()
+    entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
+
+
+async def _async_reload_entry(hass: HomeAssistant, entry) -> None:
+    await hass.config_entries.async_reload(entry.entry_id)
 
 async def async_unload_entry(hass: HomeAssistant, entry):
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
