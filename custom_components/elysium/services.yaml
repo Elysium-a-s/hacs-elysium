@@ -14,41 +14,36 @@ remove_rule:
       selector:
         text:
 create_helper:
-  name: Create Elysium toggle helper
-  description: Creates a persistent switch entity managed by the Elysium integration.
+  name: Create Elysium helper
+  fields:
+    helper_json:
+      required: true
+      selector:
+        text:
+          multiline: true
+update_helper:
+  name: Update Elysium helper
+  fields:
+    helper_json:
+      required: true
+      selector:
+        text:
+          multiline: true
+delete_helper:
+  name: Delete Elysium helper
   fields:
     helper_id:
       required: true
       selector:
         text:
-    name:
-      required: true
-      selector:
-        text:
-    entity_id:
-      required: false
-      selector:
-        text:
-    initial_state:
-      required: false
-      default: "off"
-      selector:
-        select:
-          options:
-            - "off"
-            - "on"
 set_helper:
-  name: Set Elysium helper
+  name: Set Elysium helper state
   fields:
-    entity_id:
+    helper_id:
       required: true
       selector:
-        entity:
-          domain: switch
+        text:
     state:
       required: true
       selector:
-        select:
-          options:
-            - "off"
-            - "on"
+        text:
