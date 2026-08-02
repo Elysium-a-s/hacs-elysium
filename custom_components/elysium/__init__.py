@@ -216,9 +216,17 @@ async def _async_start_execution(hass: HomeAssistant, entry) -> None:
     config = {**entry.data, **entry.options}
     agent_token = (config.get(CONF_AGENT_TOKEN) or "").strip()
     if not agent_token:
-        _LOGGER.info(
-            "Elysium: no agent token configured, execution loop stays off. "
-            "Pair this hub from the mobile app to enable reward relock."
+        # WARNING, nie INFO. Toto je jediná stopa po hube, ktorý nič nevykonáva
+        # — odmeny sa nezamykajú, čakajúce akcie sa nespúšťajú — a na INFO ju
+        # HA v predvolenom nastavení nezobrazí. Presne takto vyzeralo 2. 8.
+        # zvonku: session dobehla, zariadenie ostalo odomknuté a nikde ani
+        # riadok o tom, prečo.
+        _LOGGER.warning(
+            "Elysium: this hub has no agent token, so nothing is being "
+            "executed — rewards will not lock themselves and pending actions "
+            "will not run. Finish pairing from the mobile app "
+            "(Settings > Hub Token). If pairing reports an error, the backend "
+            "could not reach this hub."
         )
         return
 
