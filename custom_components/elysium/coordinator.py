@@ -21,6 +21,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .api import ElysiumApi, ElysiumApiError, ElysiumAuthError
+from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -50,8 +51,8 @@ class ElysiumExecutionCoordinator(DataUpdateCoordinator[dict[str, int]]):
         # at least one listener. This coordinator has no UI entity consuming its
         # data, so without a keep-alive listener it ran once during setup and
         # never polled again. Keep one internal listener for the lifetime of the
-        # coordinator so timed relocks and pending actions continue in the
-        # background even when the mobile app is closed.
+        # active coordinator so timed relocks and pending actions continue in
+        # the background even when the mobile app is closed.
         self._remove_keepalive_listener = self.async_add_listener(
             self._handle_coordinator_update
         )
@@ -59,12 +60,18 @@ class ElysiumExecutionCoordinator(DataUpdateCoordinator[dict[str, int]]):
     def _handle_coordinator_update(self) -> None:
         """Keep the coordinator subscribed without publishing a HA entity."""
 
-    async def async_shutdown(self) -> None:
-        """Cancel the internal listener and any scheduled refresh cleanly."""
-        self._remove_keepalive_listener()
-        await super().async_shutdown()
+    def _is_active_coordinator(self) -> bool:
+        """Return false after the config entry was unloaded or reloaded."""
+        return self.hass.data.get(DOMAIN, {}).get("coordinator") is self
 
     async def _async_update_data(self) -> dict[str, int]:
+        # A config-entry reload creates a replacement coordinator. The old one
+        # may still have a scheduled callback, so make it unsubscribe before it
+        # can execute the same relock a second time.
+        if not self._is_active_coordinator():
+            self._remove_keepalive_listener()
+            return {"relocked": 0, "executed": 0}
+
         relocked = await self._process_due_sessions()
         executed = await self._process_pending_executions()
         return {"relocked": relocked, "executed": executed}
