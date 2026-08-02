@@ -46,6 +46,24 @@ class ElysiumExecutionCoordinator(DataUpdateCoordinator[dict[str, int]]):
         )
         self._api = api
 
+        # DataUpdateCoordinator schedules periodic refreshes only while it has
+        # at least one listener. This coordinator has no UI entity consuming its
+        # data, so without a keep-alive listener it ran once during setup and
+        # never polled again. Keep one internal listener for the lifetime of the
+        # coordinator so timed relocks and pending actions continue in the
+        # background even when the mobile app is closed.
+        self._remove_keepalive_listener = self.async_add_listener(
+            self._handle_coordinator_update
+        )
+
+    def _handle_coordinator_update(self) -> None:
+        """Keep the coordinator subscribed without publishing a HA entity."""
+
+    async def async_shutdown(self) -> None:
+        """Cancel the internal listener and any scheduled refresh cleanly."""
+        self._remove_keepalive_listener()
+        await super().async_shutdown()
+
     async def _async_update_data(self) -> dict[str, int]:
         relocked = await self._process_due_sessions()
         executed = await self._process_pending_executions()
