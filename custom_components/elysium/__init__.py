@@ -134,9 +134,10 @@ async def async_setup_entry(hass: HomeAssistant, entry):
         entity = hass.data[DOMAIN]["entities"].get(helper_id)
         if entity is not None:
             requested = str(call.data.get("entity_id", "")).strip()
-            if requested and requested != old_entity_id:
+            current_entity_id = old_entity_id or entity.entity_id
+            if requested and requested != current_entity_id:
                 registry = er.async_get(hass)
-                registry.async_update_entity(old_entity_id, new_entity_id=requested)
+                registry.async_update_entity(current_entity_id, new_entity_id=requested)
                 record["entity_id"] = requested
                 entity.entity_id = requested
                 await helper_store.async_save(helpers)
