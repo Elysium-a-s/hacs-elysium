@@ -3,7 +3,7 @@ import logging
 from homeassistant.core import HomeAssistant, ServiceCall, Event
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.storage import Store
-from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import config_validation as cv, entity_registry as er
 from homeassistant.util import slugify
 import voluptuous as vol
 from .api import ElysiumApi
@@ -39,6 +39,8 @@ async def async_setup_entry(hass: HomeAssistant, entry):
         if "is_on" in record and "state" not in record:
             record["state"] = bool(record.pop("is_on"))
         record.setdefault("config", {})
+        record.setdefault("desired_version", 1)
+        record.setdefault("integration_version", "0.7.0")
 
     hass.data[DOMAIN] = {
         "rules": rules,
@@ -71,13 +73,31 @@ async def async_setup_entry(hass: HomeAssistant, entry):
         object_id = requested.split(".")[-1] if requested else f"elysium_{slugify(payload['name'])}"
         if not object_id.startswith("elysium_"):
             object_id = f"elysium_{object_id}"
+        normalized_name = str(payload["name"]).strip().casefold()
+        duplicate = next(
+            (
+                item for current_id, item in helpers.items()
+                if current_id != helper_id
+                and str(item.get("name", "")).strip().casefold() == normalized_name
+            ),
+            None,
+        )
+        if duplicate is not None:
+            raise ValueError("A helper with this name already exists")
+
+        desired_version = int(payload.get("desired_version", 1))
+        existing = helpers.get(helper_id)
+        if existing is not None and int(existing.get("desired_version", 1)) > desired_version:
+            return
         record = {
             "helper_id": helper_id,
             "helper_type": helper_type,
-            "name": str(payload["name"]),
-            "entity_id": f"{domain}.{slugify(object_id)}",
+            "name": str(payload["name"]).strip(),
+            "entity_id": existing.get("entity_id") if existing else f"{domain}.{slugify(object_id)}",
             "config": payload.get("config", {}),
             "state": payload.get("state"),
+            "desired_version": desired_version,
+            "integration_version": "0.7.0",
         }
         helpers[helper_id] = record
         await helper_store.async_save(helpers)
@@ -94,14 +114,52 @@ async def async_setup_entry(hass: HomeAssistant, entry):
         record = helpers.get(helper_id)
         if record is None:
             raise ValueError("Helper not found")
-        record["name"] = str(payload["name"])
+        desired_version = int(payload.get("desired_version", record.get("desired_version", 1)))
+        if desired_version < int(record.get("desired_version", 1)):
+            return
+        normalized_name = str(payload["name"]).strip().casefold()
+        if any(
+            current_id != helper_id
+            and str(item.get("name", "")).strip().casefold() == normalized_name
+            for current_id, item in helpers.items()
+        ):
+            raise ValueError("A helper with this name already exists")
+        old_entity_id = record.get("entity_id")
+        record["name"] = str(payload["name"]).strip()
         record["config"] = payload.get("config", {})
+        record["desired_version"] = desired_version
         if "state" in payload:
             record["state"] = payload["state"]
         await helper_store.async_save(helpers)
         entity = hass.data[DOMAIN]["entities"].get(helper_id)
         if entity is not None:
+            requested = str(call.data.get("entity_id", "")).strip()
+            if requested and requested != old_entity_id:
+                registry = er.async_get(hass)
+                registry.async_update_entity(old_entity_id, new_entity_id=requested)
+                record["entity_id"] = requested
+                entity.entity_id = requested
+                await helper_store.async_save(helpers)
             entity.apply_record(record)
+
+    async def replace_helper(call: ServiceCall):
+        payload = json.loads(call.data["helper_json"])
+        replaced_id = str(call.data["replaced_helper_id"])
+        old = helpers.get(replaced_id)
+        if old is None:
+            raise ValueError("Helper to replace was not found")
+        helper_id = str(payload["helper_id"])
+        if helper_id == replaced_id:
+            raise ValueError("Replacement must have a new helper_id")
+        await create_helper(call)
+        new_entity = hass.data[DOMAIN]["entities"].get(helper_id)
+        if new_entity is None:
+            raise ValueError("Replacement entity was not created")
+        entity = hass.data[DOMAIN]["entities"].pop(replaced_id, None)
+        helpers.pop(replaced_id, None)
+        await helper_store.async_save(helpers)
+        if entity is not None:
+            await entity.async_remove()
 
     async def delete_helper(call: ServiceCall):
         helper_id = str(call.data["helper_id"])
@@ -188,6 +246,11 @@ async def async_setup_entry(hass: HomeAssistant, entry):
     hass.services.async_register(DOMAIN, "remove_rule", remove, schema=vol.Schema({vol.Required("rule_id"): cv.string, vol.Optional("entity_id"): cv.string}))
     hass.services.async_register(DOMAIN, "create_helper", create_helper, schema=vol.Schema({vol.Required("helper_json"): cv.string, vol.Optional("entity_id"): cv.string}))
     hass.services.async_register(DOMAIN, "update_helper", update_helper, schema=vol.Schema({vol.Required("helper_json"): cv.string, vol.Optional("entity_id"): cv.string}))
+    hass.services.async_register(DOMAIN, "replace_helper", replace_helper, schema=vol.Schema({
+        vol.Required("helper_json"): cv.string,
+        vol.Required("replaced_helper_id"): cv.string,
+        vol.Optional("entity_id"): cv.string,
+    }))
     hass.services.async_register(DOMAIN, "delete_helper", delete_helper, schema=vol.Schema({vol.Required("helper_id"): cv.string, vol.Optional("entity_id"): cv.string}))
     hass.services.async_register(DOMAIN, "set_agent_token", set_agent_token, schema=vol.Schema({
         vol.Required("agent_token"): cv.string,
@@ -254,7 +317,7 @@ async def async_unload_entry(hass: HomeAssistant, entry):
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if not unloaded:
         return False
-    for service in ("upsert_rule", "remove_rule", "create_helper", "update_helper", "delete_helper", "set_helper", "set_agent_token"):
+    for service in ("upsert_rule", "remove_rule", "create_helper", "update_helper", "replace_helper", "delete_helper", "set_helper", "set_agent_token"):
         hass.services.async_remove(DOMAIN, service)
     hass.data.pop(DOMAIN, None)
     return True
