@@ -1,7 +1,7 @@
 {
   "domain": "elysium",
   "name": "Elysium",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "documentation": "https://github.com/Elysium-a-s/hacs-elysium",
   "codeowners": [],
   "iot_class": "local_push",
