@@ -25,7 +25,10 @@ import pytest
 COMPONENT = Path(__file__).resolve().parents[1] / "custom_components" / "elysium"
 MODULE = COMPONENT / "diagnostics.py"
 
-TOKEN = "unmistakable-agent-token-value-42"
+# Deliberately random-looking rather than a readable phrase: the fragment test
+# below slices it up, and slices of English words collide with URLs and key
+# names by accident.
+TOKEN = "Zq7Xv2Lp9Rt4Nw8Ky6Jm3Hb5Gd1Fc0Sa"
 
 
 def _load_diagnostics():
@@ -114,6 +117,28 @@ class TestTheTokenNeverLeaves:
 
         assert TOKEN not in json.dumps(output)
         assert TOKEN not in flatten(output)
+
+    async def test_not_even_a_fragment_of_it_appears(self):
+        """"Just the last four characters" is the tempting version of this.
+
+        It is tempting because it looks harmless and reads well in a bug
+        report — and it is how a credential ends up partially public. On a
+        short secret four characters is a large share of the whole, and the
+        export exists to answer "is this paired", which needs none of them.
+        """
+        output = json.dumps(
+            await export(
+                {
+                    "agent_token": TOKEN,
+                    "integration_base_url": "https://integration.example",
+                }
+            )
+        )
+
+        leaked = [
+            TOKEN[i:i + 4] for i in range(len(TOKEN) - 3) if TOKEN[i:i + 4] in output
+        ]
+        assert not leaked, f"fragments of the token reached the export: {leaked}"
 
     async def test_an_unexpected_key_is_dropped_rather_than_included(self):
         """The export lists what may appear, not what must be hidden.
