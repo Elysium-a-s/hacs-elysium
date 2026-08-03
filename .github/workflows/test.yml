@@ -1,0 +1,92 @@
+name: tests
+
+# The component is what actually locks a device when the phone is closed, and
+# it is distributed to people's homes through HACS rather than deployed by us.
+# Once a version is tagged and installed, nobody can push a fix into it — so
+# what this workflow checks is the two things a bad release makes permanent:
+# the credential leaking out of a diagnostics export, and a version that does
+# not match the tag people installed. (ELYSIUM-108)
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: component tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install
+        run: pip install aiohttp pytest pytest-aiohttp
+
+      - name: Test
+        run: python -m pytest tests/ -v
+
+  manifest:
+    name: manifest is releasable
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: manifest.json and hacs.json are valid and agree
+        run: |
+          python - <<'PY'
+          import json
+          import re
+          import sys
+
+          manifest = json.load(open("custom_components/elysium/manifest.json"))
+          hacs = json.load(open("hacs.json"))
+
+          problems = []
+
+          # HACS refuses an integration whose manifest is missing any of these,
+          # and it refuses it at install time — in the user's Home Assistant,
+          # not here. Checking them is the difference between a failed build
+          # and a support thread.
+          for key in ("domain", "name", "version", "documentation", "issue_tracker", "codeowners"):
+              if key not in manifest:
+                  problems.append(f"manifest.json is missing {key!r}")
+
+          version = manifest.get("version", "")
+          if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+              problems.append(f"version {version!r} is not MAJOR.MINOR.PATCH")
+
+          if "homeassistant" not in hacs:
+              problems.append(
+                  "hacs.json must state the minimum Home Assistant version, or "
+                  "HACS offers the release to installs that cannot run it"
+              )
+
+          if problems:
+              print("\n".join(problems))
+              sys.exit(1)
+          print(f"elysium {version}, minimum Home Assistant {hacs['homeassistant']}")
+          PY
+
+      - name: The tag and the manifest version are the same
+        # Only on a tag. A mismatch here means people install a ZIP labelled
+        # one version containing another, and HACS has no way to notice.
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          manifest="$(python -c "import json;print(json.load(open('custom_components/elysium/manifest.json'))['version'])")"
+          if [ "$tag" != "$manifest" ]; then
+            echo "tag ${GITHUB_REF_NAME} does not match manifest version ${manifest}"
+            exit 1
+          fi
+          echo "tag ${GITHUB_REF_NAME} matches manifest version ${manifest}"

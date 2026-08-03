@@ -1,0 +1,41 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Elysium",
+        "description": "Open Elysium on your phone, go to the central unit and tap Pair Home Assistant. Type the code it shows below.",
+        "data": {
+          "pairing_code": "Pairing code",
+          "integration_base_url": "Integration service URL",
+          "reward_base_url": "Reward service URL",
+          "behavior_base_url": "Behavior engine URL"
+        }
+      }
+    },
+    "error": {
+      "invalid_code": "That code is not valid any more. Codes last ten minutes and work once — ask the app for a new one.",
+      "cannot_connect": "Could not reach Elysium. Check that this Home Assistant has internet access, then try again."
+    },
+    "abort": {
+      "single_instance_allowed": "Elysium is already set up on this Home Assistant."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Elysium",
+        "description": "Leave the code empty to keep the current pairing. Enter a new code from the app to pair this hub again.",
+        "data": {
+          "pairing_code": "New pairing code (optional)",
+          "integration_base_url": "Integration service URL",
+          "reward_base_url": "Reward service URL",
+          "behavior_base_url": "Behavior engine URL"
+        }
+      }
+    },
+    "error": {
+      "invalid_code": "That code is not valid any more. Codes last ten minutes and work once — ask the app for a new one.",
+      "cannot_connect": "Could not reach Elysium. Check that this Home Assistant has internet access, then try again."
+    }
+  }
+}
