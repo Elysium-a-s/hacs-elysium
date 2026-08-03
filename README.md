@@ -81,7 +81,6 @@ holding.
 ## Development
 
 ```bash
-cd home-assistant
 pip install aiohttp pytest pytest-aiohttp
 python -m pytest tests/ -v
 ```
