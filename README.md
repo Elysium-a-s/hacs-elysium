@@ -2,7 +2,7 @@
 
 Locks a reward back up when its time is out, whether or not the phone is
 open. It is the second executor in the order recorded in
-[`docs/adr/0001-kto-vlastni-vykonavanie.md`](../docs/adr/0001-kto-vlastni-vykonavanie.md):
+[`docs/adr/0001-kto-vlastni-vykonavanie.md`](https://github.com/Elysium-a-s/FastAPI-module/blob/main/docs/adr/0001-kto-vlastni-vykonavanie.md):
 the one-shot automation goes first, this agent fixes what the automation
 missed, and the backend sweep can only reach hubs that are visible from the
 internet — which a LAN hub is not.
@@ -11,7 +11,7 @@ Without it installed, a `local` household has one mechanism instead of three.
 
 ## Install
 
-**HACS → ⋮ → Custom repositories** → add `Elysium-a-s/FastAPI-module`,
+**HACS → ⋮ → Custom repositories** → add `Elysium-a-s/hacs-elysium`,
 category **Integration** → install **Elysium** → restart Home Assistant →
 **Settings → Devices & Services → Add Integration → Elysium**.
 

@@ -1,0 +1,101 @@
+name: home assistant component release
+
+# HACS installs a release, not a branch. With `zip_release` set in hacs.json it
+# downloads the named asset and unpacks it straight into `custom_components/`,
+# so the ZIP's internal layout is the installed layout: the component's files
+# must sit at the root of the archive, not under `custom_components/elysium/`.
+# Getting that wrong produces an install that looks successful and does
+# nothing. (ELYSIUM-108)
+
+on:
+  push:
+    tags:
+      - 'ha-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release, e.g. ha-v0.6.0'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Read the version out of the manifest
+        id: manifest
+        run: |
+          version="$(python -c "import json;print(json.load(open('custom_components/elysium/manifest.json'))['version'])")"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: The tag must say what the manifest says
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          expected="ha-v${{ steps.manifest.outputs.version }}"
+          if [ "$tag" != "$expected" ]; then
+            echo "tag ${tag} does not match the manifest (expected ${expected})"
+            echo "Bump manifest.json or retag — a ZIP labelled one version"
+            echo "containing another cannot be told apart after install."
+            exit 1
+          fi
+
+      - name: Build the ZIP
+        run: |
+          set -euo pipefail
+          cd custom_components/elysium
+          # Zipped from inside the component directory on purpose: HACS
+          # unpacks the archive into custom_components/elysium/, so a nested
+          # path here would land the files one level too deep.
+          zip -r "${GITHUB_WORKSPACE}/elysium.zip" . -x '*__pycache__*' -x '*.pyc'
+          cd "${GITHUB_WORKSPACE}"
+          unzip -l elysium.zip
+
+      - name: The archive must be unpackable straight into the component dir
+        run: |
+          set -euo pipefail
+          if ! unzip -l elysium.zip | grep -q ' manifest.json$'; then
+            echo "manifest.json is not at the root of the archive."
+            echo "HACS unpacks this into custom_components/elysium/, so a"
+            echo "nested layout installs files nothing will ever import."
+            exit 1
+          fi
+
+      - name: Changelog since the last component release
+        id: changelog
+        run: |
+          set -euo pipefail
+          previous="$(git tag --list 'ha-v*' --sort=-v:refname | sed -n '2p')"
+          {
+            echo 'body<<CHANGELOG'
+            if [ -n "$previous" ]; then
+              echo "### Changes since ${previous}"
+              echo
+              git log --pretty='- %s' "${previous}..HEAD" || true
+            else
+              echo "First packaged release of the Elysium Home Assistant component."
+            fi
+            echo
+            echo "**Install:** HACS → three dots → Custom repositories → add"
+            echo "\`${{ github.repository }}\` as an Integration, then install Elysium."
+            echo "Pairing code comes from the Elysium app; nothing is copied by hand."
+            echo 'CHANGELOG'
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: Elysium ${{ steps.manifest.outputs.version }} (Home Assistant)
+          body: ${{ steps.changelog.outputs.body }}
+          files: elysium.zip
