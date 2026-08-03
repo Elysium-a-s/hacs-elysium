@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from typing import Any
 
 import aiohttp
@@ -85,11 +86,15 @@ class ElysiumApi:
         self, method: str, url: str, payload: dict[str, Any] | None = None
     ) -> Any:
         token = await self._access()
+        request_id = str(uuid.uuid4())
         try:
             async with self._session.request(
                 method,
                 url,
-                headers={"Authorization": f"Bearer {token}"},
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "X-Request-ID": request_id,
+                },
                 json=payload,
                 timeout=REQUEST_TIMEOUT,
             ) as response:
