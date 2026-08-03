@@ -29,6 +29,19 @@ update_helper:
       selector:
         text:
           multiline: true
+replace_helper:
+  name: Replace Elysium helper
+  description: Creates the successor first and removes the old entity only after creation succeeds.
+  fields:
+    helper_json:
+      required: true
+      selector:
+        text:
+          multiline: true
+    replaced_helper_id:
+      required: true
+      selector:
+        text:
 delete_helper:
   name: Delete Elysium helper
   fields:
