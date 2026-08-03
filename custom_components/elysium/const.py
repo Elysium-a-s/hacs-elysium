@@ -5,6 +5,9 @@ STORAGE_VERSION = 1
 
 # Konfigurácia vykonávacej slučky (ELYSIUM-42).
 CONF_AGENT_TOKEN = "agent_token"
+# ELYSIUM-108: čo používateľ naozaj zadá. Token sa zaň vymení a do config
+# entry sa uloží už len token — kód je jednorazový a po použití bezcenný.
+CONF_PAIRING_CODE = "pairing_code"
 CONF_INTEGRATION_URL = "integration_base_url"
 CONF_REWARD_URL = "reward_base_url"
 CONF_BEHAVIOR_URL = "behavior_base_url"
