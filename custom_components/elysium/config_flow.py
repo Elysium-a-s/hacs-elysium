@@ -1,16 +1,4 @@
-"""Párovanie jednotky kódom z appky (ELYSIUM-108).
-
-Predtým tu bolo pole na agent token — 43 náhodných znakov, ktoré mal
-používateľ prepísať z telefónu do prehliadača. To je presne ten ručný krok,
-ktorý mal zaniknúť, a bol aj poslednou vecou medzi „nainštaluj z HACS" a
-funkčným hubom.
-
-Teraz sa zadáva osemznakový kód a token si komponent vyzdvihne sám. Na
-obrazovke sa token neobjaví a nikto ho neopisuje.
-
-Samotná výmena je v `pairing.py` — nie je na nej nič, čo by patrilo Home
-Assistantu, a tam sa dá otestovať bez celého HA harnessu.
-"""
+"""Párovanie jednotky kódom z appky (ELYSIUM-108)."""
 
 from __future__ import annotations
 
@@ -23,11 +11,15 @@ from .const import (
     CONF_BEHAVIOR_URL,
     CONF_INTEGRATION_URL,
     CONF_PAIRING_CODE,
+    CONF_POLL_INTERVAL_SECONDS,
     CONF_REWARD_URL,
     DEFAULT_BEHAVIOR_URL,
     DEFAULT_INTEGRATION_URL,
+    DEFAULT_POLL_INTERVAL_SECONDS,
     DEFAULT_REWARD_URL,
     DOMAIN,
+    MAX_POLL_INTERVAL_SECONDS,
+    MIN_POLL_INTERVAL_SECONDS,
 )
 from .pairing import PairingFailed, async_redeem_pairing_code
 
@@ -42,9 +34,6 @@ SCHEMA = vol.Schema(
 
 
 class ElysiumConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    # 3: `agent_token` sa už nezadáva ručne, získava sa výmenou za kód.
-    # Existujúce entry ostávajú platné — token v nich je stále token, takže
-    # migrácia nemá čo prepisovať.
     VERSION = 3
 
     async def async_step_user(self, user_input=None):
@@ -65,8 +54,6 @@ class ElysiumConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 step_id="user", data_schema=SCHEMA, errors={"base": error.args[0]}
             )
 
-        # Kód sa neukladá. Je jednorazový, takže uložiť by sa dal už len ako
-        # nepoužiteľný reťazec, ktorý však stále vyzerá ako credential.
         data = {k: v for k, v in user_input.items() if k != CONF_PAIRING_CODE}
         data[CONF_AGENT_TOKEN] = token
         return self.async_create_entry(title="Elysium", data=data)
@@ -77,17 +64,15 @@ class ElysiumConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class ElysiumOptionsFlow(config_entries.OptionsFlow):
-    """Prepárovanie a zmena adries bez odstránenia integrácie.
-
-    Kód je nepovinný: kto sem prišiel len prehodiť službu na staging, nemá
-    dôvod pýtať si nový kód z appky. Prázdne pole teda znamená „token nechaj
-    tak", nie „zmaž ho".
-    """
+    """Prepárovanie, adresy a vedomý override poll intervalu."""
 
     def __init__(self, config_entry) -> None:
         self._entry = config_entry
 
     def _schema(self, current: dict):
+        poll_value = int(
+            current.get(CONF_POLL_INTERVAL_SECONDS, DEFAULT_POLL_INTERVAL_SECONDS)
+        )
         return vol.Schema(
             {
                 vol.Optional(CONF_PAIRING_CODE, default=""): str,
@@ -103,6 +88,19 @@ class ElysiumOptionsFlow(config_entries.OptionsFlow):
                     CONF_BEHAVIOR_URL,
                     default=current.get(CONF_BEHAVIOR_URL, DEFAULT_BEHAVIOR_URL),
                 ): str,
+                vol.Optional(
+                    CONF_POLL_INTERVAL_SECONDS,
+                    default=poll_value,
+                ): vol.Any(
+                    vol.Equal(DEFAULT_POLL_INTERVAL_SECONDS),
+                    vol.All(
+                        vol.Coerce(int),
+                        vol.Range(
+                            min=MIN_POLL_INTERVAL_SECONDS,
+                            max=MAX_POLL_INTERVAL_SECONDS,
+                        ),
+                    ),
+                ),
             }
         )
 
@@ -125,9 +123,6 @@ class ElysiumOptionsFlow(config_entries.OptionsFlow):
                     step_id="init", data_schema=schema, errors={"base": error.args[0]}
                 )
         elif current.get(CONF_AGENT_TOKEN):
-            # Bez tohto by uloženie formulára s prázdnym kódom vymazalo token,
-            # ktorý tam už bol: options prekrývajú data, takže chýbajúci kľúč
-            # tu nie je „nechaj tak", ale „nastav na nič".
             options[CONF_AGENT_TOKEN] = current[CONF_AGENT_TOKEN]
 
         return self.async_create_entry(title="", data=options)
