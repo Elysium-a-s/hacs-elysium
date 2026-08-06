@@ -11,6 +11,12 @@ CONF_PAIRING_CODE = "pairing_code"
 CONF_INTEGRATION_URL = "integration_base_url"
 CONF_REWARD_URL = "reward_base_url"
 CONF_BEHAVIOR_URL = "behavior_base_url"
+# 0 znamená adaptívny interval riadený backendom. Kladná hodnota je vedomý
+# manuálny override z Options Flow a používa sa pre každý poll.
+CONF_POLL_INTERVAL_SECONDS = "poll_interval_seconds"
+DEFAULT_POLL_INTERVAL_SECONDS = 0
+MIN_POLL_INTERVAL_SECONDS = 30
+MAX_POLL_INTERVAL_SECONDS = 3600
 
 # Produkčné Render adresy. Sú to len predvyplnené hodnoty vo formulári —
 # skutočné adresy sa čítajú z config entry, aby sa dal komponent nasmerovať
