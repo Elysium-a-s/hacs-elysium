@@ -1,15 +1,4 @@
-"""Vykonávacia slučka komponentu (ELYSIUM-42).
-
-Do ELYSIUM-42 vykonávala akcie mobilná appka — a to len keď bola otvorená.
-Odmena odomknutá na dve hodiny sa nikdy nezamkla späť, ak používateľ appku
-nezapol. Anti-cheat vrstva teda stála na dobrej vôli práve toho používateľa,
-ktorý mal dôvod ju obísť.
-
-Táto slučka beží v Home Assistante, čiže vnútri domácnosti. To je jediné
-miesto, ktoré dosiahne na hub v oboch režimoch pripojenia: pri `remote` naň
-vidí aj backend, pri `local` nie — vtedy má token na HA jedine telefón.
-Zdôvodnenie je v docs/adr/0001-kto-vlastni-vykonavanie.md.
-"""
+"""Vykonávacia slučka komponentu (ELYSIUM-42, ELYSIUM-81)."""
 
 from __future__ import annotations
 
@@ -21,13 +10,16 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .api import ElysiumApi, ElysiumApiError, ElysiumAuthError
-from .const import DOMAIN
+from .const import (
+    CONF_POLL_INTERVAL_SECONDS,
+    DEFAULT_POLL_INTERVAL_SECONDS,
+    DOMAIN,
+    MAX_POLL_INTERVAL_SECONDS,
+    MIN_POLL_INTERVAL_SECONDS,
+)
 
 _LOGGER = logging.getLogger(__name__)
-
-# Kompromis medzi presnosťou zamknutia a zaťažením backendu. Relock tak
-# nastane do minúty po vypršaní — namiesto "možno nikdy", čo platilo dovtedy.
-DEFAULT_POLL_INTERVAL = timedelta(seconds=60)
+FALLBACK_POLL_INTERVAL = timedelta(seconds=60)
 
 
 class ElysiumExecutionCoordinator(DataUpdateCoordinator[dict[str, int]]):
@@ -37,7 +29,7 @@ class ElysiumExecutionCoordinator(DataUpdateCoordinator[dict[str, int]]):
         self,
         hass: HomeAssistant,
         api: ElysiumApi,
-        poll_interval: timedelta = DEFAULT_POLL_INTERVAL,
+        poll_interval: timedelta = FALLBACK_POLL_INTERVAL,
     ) -> None:
         super().__init__(
             hass,
@@ -46,13 +38,6 @@ class ElysiumExecutionCoordinator(DataUpdateCoordinator[dict[str, int]]):
             update_interval=poll_interval,
         )
         self._api = api
-
-        # DataUpdateCoordinator schedules periodic refreshes only while it has
-        # at least one listener. This coordinator has no UI entity consuming its
-        # data, so without a keep-alive listener it ran once during setup and
-        # never polled again. Keep one internal listener for the lifetime of the
-        # active coordinator so timed relocks and pending actions continue in
-        # the background even when the mobile app is closed.
         self._remove_keepalive_listener = self.async_add_listener(
             self._handle_coordinator_update
         )
@@ -61,13 +46,37 @@ class ElysiumExecutionCoordinator(DataUpdateCoordinator[dict[str, int]]):
         """Keep the coordinator subscribed without publishing a HA entity."""
 
     def _is_active_coordinator(self) -> bool:
-        """Return false after the config entry was unloaded or reloaded."""
         return self.hass.data.get(DOMAIN, {}).get("coordinator") is self
 
+    def _manual_poll_override(self) -> int:
+        """Read the current Options Flow value; zero keeps server control."""
+        entries = self.hass.config_entries.async_entries(DOMAIN)
+        if not entries:
+            return DEFAULT_POLL_INTERVAL_SECONDS
+        raw = entries[0].options.get(
+            CONF_POLL_INTERVAL_SECONDS, DEFAULT_POLL_INTERVAL_SECONDS
+        )
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            return DEFAULT_POLL_INTERVAL_SECONDS
+        return value
+
+    def _apply_next_poll(self, server_seconds: int | None) -> None:
+        override = self._manual_poll_override()
+        selected = override if override > 0 else server_seconds
+        if selected is None:
+            return
+        selected = max(
+            MIN_POLL_INTERVAL_SECONDS,
+            min(MAX_POLL_INTERVAL_SECONDS, int(selected)),
+        )
+        interval = timedelta(seconds=selected)
+        if self.update_interval != interval:
+            _LOGGER.debug("Next Elysium poll in %s seconds", selected)
+            self.update_interval = interval
+
     async def _async_update_data(self) -> dict[str, int]:
-        # A config-entry reload creates a replacement coordinator. The old one
-        # may still have a scheduled callback, so make it unsubscribe before it
-        # can execute the same relock a second time.
         if not self._is_active_coordinator():
             self._remove_keepalive_listener()
             return {"relocked": 0, "executed": 0}
@@ -76,11 +85,10 @@ class ElysiumExecutionCoordinator(DataUpdateCoordinator[dict[str, int]]):
         executed = await self._process_pending_executions()
         return {"relocked": relocked, "executed": executed}
 
-    # ---- Reward relock ---------------------------------------------------
-
     async def _process_due_sessions(self) -> int:
         try:
-            due = await self._api.due_sessions()
+            due, poll_after = await self._api.due_sessions()
+            self._apply_next_poll(poll_after)
         except ElysiumAuthError:
             raise
         except ElysiumApiError as error:
@@ -95,10 +103,7 @@ class ElysiumExecutionCoordinator(DataUpdateCoordinator[dict[str, int]]):
                 continue
             try:
                 await self._call_service(item.get("command", {}))
-            except Exception as error:  # noqa: BLE001 — reported, then next item
-                # Jedno zariadenie, ktoré sa nepodarí zamknúť, nesmie zablokovať
-                # ostatné. Backend si zlyhanie poznačí a session ostane splatná,
-                # takže ďalší cyklus to skúsi znova.
+            except Exception as error:  # noqa: BLE001
                 _LOGGER.error(
                     "Could not relock %s: %s", session.get("title", session_id), error
                 )
@@ -107,12 +112,12 @@ class ElysiumExecutionCoordinator(DataUpdateCoordinator[dict[str, int]]):
                 )
                 continue
 
-            await self._report_safely(self._api.report_session_closed, session_id, True, None)
+            await self._report_safely(
+                self._api.report_session_closed, session_id, True, None
+            )
             closed += 1
 
         return closed
-
-    # ---- Čakajúce akcie --------------------------------------------------
 
     async def _process_pending_executions(self) -> int:
         try:
@@ -130,26 +135,21 @@ class ElysiumExecutionCoordinator(DataUpdateCoordinator[dict[str, int]]):
                 continue
             try:
                 await self._call_service(execution)
-            except Exception as error:  # noqa: BLE001 — reported, then next item
+            except Exception as error:  # noqa: BLE001
                 _LOGGER.error("Could not run execution %s: %s", execution_id, error)
                 await self._report_safely(
                     self._api.report_execution, execution_id, False, str(error)
                 )
                 continue
 
-            await self._report_safely(self._api.report_execution, execution_id, True, None)
+            await self._report_safely(
+                self._api.report_execution, execution_id, True, None
+            )
             done += 1
 
         return done
 
-    # ---- Spoločné --------------------------------------------------------
-
     async def _call_service(self, command: dict[str, Any]) -> None:
-        """Zavolá HA službu popísanú príkazom z backendu.
-
-        Reward `DeviceCommand` aj `ActionExecutionResponse` nesú tie isté
-        štyri polia, len s inými názvami pre dáta — preto ten fallback.
-        """
         domain = command.get("service_domain")
         service = command.get("service_name")
         entity_id = command.get("entity_id")
@@ -167,12 +167,6 @@ class ElysiumExecutionCoordinator(DataUpdateCoordinator[dict[str, int]]):
         await self.hass.services.async_call(domain, service, payload, blocking=True)
 
     async def _report_safely(self, report, item_id, succeeded, error_message) -> None:
-        """Nahlási výsledok, ale zlyhanie hlásenia nezhodí celý cyklus.
-
-        Ak sa výsledok nedoručí, položka ostane splatná a ďalší cyklus ju
-        spracuje znova. Zamknúť zariadenie dvakrát je neškodné; nechať ho
-        odomknuté nie je.
-        """
         try:
             await report(item_id, succeeded, error_message)
         except ElysiumApiError as error:

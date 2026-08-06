@@ -24,12 +24,13 @@
     "step": {
       "init": {
         "title": "Elysium",
-        "description": "Leave the code empty to keep the current pairing. Enter a new code from the app to pair this hub again.",
+        "description": "Leave the code empty to keep the current pairing. Poll interval 0 uses adaptive server control: frequent checks while a timed reward is open, infrequent checks while idle. This interval detects failed recovery; it does not determine the normal relock time, which Home Assistant owns locally.",
         "data": {
           "pairing_code": "New pairing code (optional)",
           "integration_base_url": "Integration service URL",
           "reward_base_url": "Reward service URL",
-          "behavior_base_url": "Behavior engine URL"
+          "behavior_base_url": "Behavior engine URL",
+          "poll_interval_seconds": "Poll interval override in seconds (0 = adaptive)"
         }
       }
     },

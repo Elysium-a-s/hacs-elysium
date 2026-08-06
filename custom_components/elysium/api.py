@@ -1,12 +1,4 @@
-"""Tenký klient Elysium backendu pre Home Assistant komponent.
-
-Komponent sa backendu preukazuje **agent tokenom** centrálnej jednotky, ktorý
-doňho pri párovaní vložila mobilná appka. Ten sa vymieňa za krátkodobý access
-token — bežný Elysium JWT — vďaka čomu komponent volá presne tie isté
-endpointy ako appka a reward-service ani behavior-engine o ňom nemusia vedieť.
-
-Viac v docs/adr/0001-kto-vlastni-vykonavanie.md.
-"""
+"""Tenký klient Elysium backendu pre Home Assistant komponent."""
 
 from __future__ import annotations
 
@@ -18,12 +10,9 @@ from typing import Any
 import aiohttp
 
 _LOGGER = logging.getLogger(__name__)
-
 REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=30)
-
-# Access token platí 15 minút. Obnovujeme ho o minútu skôr, aby nevypršal
-# uprostred cyklu, v ktorom sa už zamyká zariadenie.
 TOKEN_REFRESH_MARGIN_SECONDS = 60
+POLL_AFTER_HEADER = "X-Elysium-Poll-After"
 
 
 class ElysiumApiError(Exception):
@@ -50,8 +39,6 @@ class ElysiumApi:
         self._agent_token = agent_token
         self._access_token: str | None = None
         self._access_expires_at: float = 0.0
-
-    # ---- Autentifikácia --------------------------------------------------
 
     async def _access(self) -> str:
         if self._access_token and time.monotonic() < self._access_expires_at:
@@ -85,6 +72,12 @@ class ElysiumApi:
     async def _request(
         self, method: str, url: str, payload: dict[str, Any] | None = None
     ) -> Any:
+        body, _ = await self._request_with_headers(method, url, payload)
+        return body
+
+    async def _request_with_headers(
+        self, method: str, url: str, payload: dict[str, Any] | None = None
+    ) -> tuple[Any, dict[str, str]]:
         token = await self._access()
         request_id = str(uuid.uuid4())
         try:
@@ -99,24 +92,29 @@ class ElysiumApi:
                 timeout=REQUEST_TIMEOUT,
             ) as response:
                 if response.status == 401:
-                    # Access token mohol vypršať skôr, než sme čakali. Zahodíme
-                    # ho, aby si ho ďalší cyklus vypýtal nanovo; opakovať volanie
-                    # tu by pri odvolanom agent tokene znamenalo nekonečnú slučku.
                     self._access_token = None
                     raise ElysiumAuthError(f"{url} rejected the access token")
                 if response.status >= 400:
                     raise ElysiumApiError(f"{url} returned {response.status}")
+                headers = dict(response.headers)
                 if response.status == 204 or not response.content_length:
-                    return None
-                return await response.json()
+                    return None, headers
+                return await response.json(), headers
         except aiohttp.ClientError as error:
             raise ElysiumApiError(f"Could not reach {url}: {error}") from error
 
-    # ---- Práca, ktorú má komponent vykonať -------------------------------
-
-    async def due_sessions(self) -> list[dict[str, Any]]:
-        """Reward sessions, ktorým vypršal čas a majú sa zamknúť späť."""
-        return await self._request("GET", f"{self._reward}/api/rewards/sessions/due") or []
+    async def due_sessions(self) -> tuple[list[dict[str, Any]], int | None]:
+        """Return due work and the backend-selected next poll delay."""
+        payload, headers = await self._request_with_headers(
+            "GET", f"{self._reward}/api/rewards/sessions/due"
+        )
+        raw_interval = headers.get(POLL_AFTER_HEADER)
+        try:
+            poll_after = int(raw_interval) if raw_interval is not None else None
+        except ValueError:
+            _LOGGER.warning("Ignoring invalid %s header: %s", POLL_AFTER_HEADER, raw_interval)
+            poll_after = None
+        return payload or [], poll_after
 
     async def report_session_closed(
         self, session_id: str, succeeded: bool, error_message: str | None = None
@@ -128,7 +126,6 @@ class ElysiumApi:
         )
 
     async def pending_executions(self) -> list[dict[str, Any]]:
-        """Akcie, ktoré behavior-engine vytvoril a nikto ich zatiaľ nevykonal."""
         payload = await self._request(
             "GET", f"{self._behavior}/api/behavior/action-executions/pending"
         )
