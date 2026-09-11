@@ -25,7 +25,9 @@ update_coordinator = types.ModuleType("homeassistant.helpers.update_coordinator"
 
 
 class _DataUpdateCoordinator:
-    pass
+    @classmethod
+    def __class_getitem__(cls, _item):
+        return cls
 
 
 update_coordinator.DataUpdateCoordinator = _DataUpdateCoordinator
