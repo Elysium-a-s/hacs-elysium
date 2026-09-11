@@ -1,18 +1,38 @@
+import sys
+import types
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
-# The repository's lightweight CI stubs expose HomeAssistant but not the
-# runtime-only type aliases imported by the integration package initializer.
-# Add those aliases before importing the package so these focused tests do not
-# require installing the full Home Assistant distribution.
-import homeassistant.core as ha_core
+# CI intentionally does not install Home Assistant. Load the two modules under
+# test without executing custom_components.elysium.__init__, which imports the
+# full HA runtime. coordinator.py only needs these symbols to define its class.
+_COMPONENT_DIR = Path(__file__).resolve().parents[1] / "custom_components" / "elysium"
 
-if not hasattr(ha_core, "ServiceCall"):
-    ha_core.ServiceCall = object
-if not hasattr(ha_core, "Event"):
-    ha_core.Event = object
+elysium_package = types.ModuleType("custom_components.elysium")
+elysium_package.__path__ = [str(_COMPONENT_DIR)]
+sys.modules["custom_components.elysium"] = elysium_package
+
+homeassistant = types.ModuleType("homeassistant")
+homeassistant.__path__ = []
+core = types.ModuleType("homeassistant.core")
+core.HomeAssistant = object
+helpers = types.ModuleType("homeassistant.helpers")
+helpers.__path__ = []
+update_coordinator = types.ModuleType("homeassistant.helpers.update_coordinator")
+
+
+class _DataUpdateCoordinator:
+    pass
+
+
+update_coordinator.DataUpdateCoordinator = _DataUpdateCoordinator
+sys.modules["homeassistant"] = homeassistant
+sys.modules["homeassistant.core"] = core
+sys.modules["homeassistant.helpers"] = helpers
+sys.modules["homeassistant.helpers.update_coordinator"] = update_coordinator
 
 from custom_components.elysium.api import ElysiumApi
 from custom_components.elysium.coordinator import ElysiumExecutionCoordinator, _expected_states
@@ -43,9 +63,13 @@ def test_expected_reward_states_match_backend_contract():
 
 
 @pytest.mark.asyncio
-async def test_readback_confirms_matching_state():
+async def test_readback_confirms_matching_state(monkeypatch):
     coordinator = _coordinator_with_states(["on", "off"])
 
+    async def no_delay(_):
+        return None
+
+    monkeypatch.setattr("custom_components.elysium.coordinator.asyncio.sleep", no_delay)
     confirmed, error = await coordinator._confirm_service_result(
         {"entity_id": "switch.tv", "service_name": "turn_off"}
     )
@@ -55,9 +79,13 @@ async def test_readback_confirms_matching_state():
 
 
 @pytest.mark.asyncio
-async def test_readback_rejects_state_mismatch():
+async def test_readback_rejects_state_mismatch(monkeypatch):
     coordinator = _coordinator_with_states(["on"])
 
+    async def no_delay(_):
+        return None
+
+    monkeypatch.setattr("custom_components.elysium.coordinator.asyncio.sleep", no_delay)
     confirmed, error = await coordinator._confirm_service_result(
         {"entity_id": "switch.tv", "service_name": "turn_off"}
     )
