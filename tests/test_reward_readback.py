@@ -37,6 +37,7 @@ sys.modules["homeassistant.helpers"] = helpers
 sys.modules["homeassistant.helpers.update_coordinator"] = update_coordinator
 
 from custom_components.elysium.api import ElysiumApi
+from custom_components.elysium import coordinator as coordinator_module
 from custom_components.elysium.coordinator import ElysiumExecutionCoordinator, _expected_states
 
 
@@ -71,7 +72,7 @@ async def test_readback_confirms_matching_state(monkeypatch):
     async def no_delay(_):
         return None
 
-    monkeypatch.setattr("custom_components.elysium.coordinator.asyncio.sleep", no_delay)
+    monkeypatch.setattr(coordinator_module.asyncio, "sleep", no_delay)
     confirmed, error = await coordinator._confirm_service_result(
         {"entity_id": "switch.tv", "service_name": "turn_off"}
     )
@@ -87,7 +88,7 @@ async def test_readback_rejects_state_mismatch(monkeypatch):
     async def no_delay(_):
         return None
 
-    monkeypatch.setattr("custom_components.elysium.coordinator.asyncio.sleep", no_delay)
+    monkeypatch.setattr(coordinator_module.asyncio, "sleep", no_delay)
     confirmed, error = await coordinator._confirm_service_result(
         {"entity_id": "switch.tv", "service_name": "turn_off"}
     )
