@@ -3,6 +3,17 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+# The repository's lightweight CI stubs expose HomeAssistant but not the
+# runtime-only type aliases imported by the integration package initializer.
+# Add those aliases before importing the package so these focused tests do not
+# require installing the full Home Assistant distribution.
+import homeassistant.core as ha_core
+
+if not hasattr(ha_core, "ServiceCall"):
+    ha_core.ServiceCall = object
+if not hasattr(ha_core, "Event"):
+    ha_core.Event = object
+
 from custom_components.elysium.api import ElysiumApi
 from custom_components.elysium.coordinator import ElysiumExecutionCoordinator, _expected_states
 
