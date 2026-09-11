@@ -117,12 +117,21 @@ class ElysiumApi:
         return payload or [], poll_after
 
     async def report_session_closed(
-        self, session_id: str, succeeded: bool, error_message: str | None = None
+        self,
+        session_id: str,
+        succeeded: bool,
+        error_message: str | None = None,
+        provider_confirmed: bool = False,
     ) -> None:
+        """Report command outcome and whether HA state readback confirmed it."""
         await self._request(
             "POST",
             f"{self._reward}/api/rewards/sessions/{session_id}/completion-result",
-            {"succeeded": succeeded, "error_message": error_message},
+            {
+                "succeeded": succeeded,
+                "error_message": error_message,
+                "provider_confirmed": provider_confirmed,
+            },
         )
 
     async def pending_executions(self) -> list[dict[str, Any]]:
