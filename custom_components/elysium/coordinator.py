@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import timedelta
 from typing import Any
@@ -20,6 +21,19 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 FALLBACK_POLL_INTERVAL = timedelta(seconds=60)
+READBACK_ATTEMPTS = 5
+READBACK_DELAY_SECONDS = 0.25
+
+
+def _expected_states(service_name: str | None) -> set[str]:
+    service = (service_name or "").lower()
+    if service in {"turn_off", "off"}:
+        return {"off"}
+    if service in {"lock", "lock_door"}:
+        return {"locked"}
+    if service in {"close", "close_cover"}:
+        return {"closed"}
+    return set()
 
 
 class ElysiumExecutionCoordinator(DataUpdateCoordinator[dict[str, int]]):
@@ -99,23 +113,34 @@ class ElysiumExecutionCoordinator(DataUpdateCoordinator[dict[str, int]]):
         for item in due:
             session = item.get("session", {})
             session_id = session.get("session_id")
+            command = item.get("command", {})
             if session_id is None:
                 continue
             try:
-                await self._call_service(item.get("command", {}))
+                await self._call_service(command)
             except Exception as error:  # noqa: BLE001
                 _LOGGER.error(
                     "Could not relock %s: %s", session.get("title", session_id), error
                 )
                 await self._report_safely(
-                    self._api.report_session_closed, session_id, False, str(error)
+                    self._api.report_session_closed,
+                    session_id,
+                    False,
+                    str(error),
+                    provider_confirmed=False,
                 )
                 continue
 
+            confirmed, readback_error = await self._confirm_service_result(command)
             await self._report_safely(
-                self._api.report_session_closed, session_id, True, None
+                self._api.report_session_closed,
+                session_id,
+                True,
+                readback_error,
+                provider_confirmed=confirmed,
             )
-            closed += 1
+            if confirmed:
+                closed += 1
 
         return closed
 
@@ -166,8 +191,48 @@ class ElysiumExecutionCoordinator(DataUpdateCoordinator[dict[str, int]]):
 
         await self.hass.services.async_call(domain, service, payload, blocking=True)
 
-    async def _report_safely(self, report, item_id, succeeded, error_message) -> None:
+    async def _confirm_service_result(self, command: dict[str, Any]) -> tuple[bool, str | None]:
+        entity_id = command.get("entity_id")
+        expected = _expected_states(command.get("service_name"))
+        if not entity_id:
+            return False, "Reward command has no entity_id for Home Assistant readback"
+        if not expected:
+            return False, "Reward command has no known confirmed state for Home Assistant readback"
+
+        last_state: str | None = None
+        for attempt in range(READBACK_ATTEMPTS):
+            state = self.hass.states.get(entity_id)
+            if state is not None:
+                last_state = str(state.state).lower()
+                if last_state in expected:
+                    return True, None
+                if last_state in {"unavailable", "unknown"}:
+                    return False, f"Home Assistant state is {last_state}"
+            if attempt + 1 < READBACK_ATTEMPTS:
+                await asyncio.sleep(READBACK_DELAY_SECONDS)
+
+        if last_state is None:
+            return False, f"Home Assistant did not return state for {entity_id}"
+        return False, f"Home Assistant state remained {last_state!r}; expected {sorted(expected)}"
+
+    async def _report_safely(
+        self,
+        report,
+        item_id,
+        succeeded,
+        error_message,
+        *,
+        provider_confirmed: bool | None = None,
+    ) -> None:
         try:
-            await report(item_id, succeeded, error_message)
+            if provider_confirmed is None:
+                await report(item_id, succeeded, error_message)
+            else:
+                await report(
+                    item_id,
+                    succeeded,
+                    error_message,
+                    provider_confirmed=provider_confirmed,
+                )
         except ElysiumApiError as error:
             _LOGGER.warning("Could not report result for %s: %s", item_id, error)
