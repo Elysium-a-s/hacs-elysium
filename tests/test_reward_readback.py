@@ -36,7 +36,7 @@ sys.modules["homeassistant.core"] = core
 sys.modules["homeassistant.helpers"] = helpers
 sys.modules["homeassistant.helpers.update_coordinator"] = update_coordinator
 
-from custom_components.elysium.api import ElysiumApi
+from custom_components.elysium.api import ElysiumApi, ElysiumApiError
 from custom_components.elysium import coordinator as coordinator_module
 from custom_components.elysium.coordinator import ElysiumExecutionCoordinator, _expected_states
 
@@ -56,6 +56,33 @@ def _coordinator_with_states(values):
     coordinator = object.__new__(ElysiumExecutionCoordinator)
     coordinator.hass = SimpleNamespace(states=_States(values))
     return coordinator
+
+
+@pytest.mark.asyncio
+async def test_completed_execution_is_journaled_before_backend_ack():
+    api = SimpleNamespace(
+        pending_executions=AsyncMock(return_value=[{
+            "execution_id": "execution-1", "service_domain": "switch",
+            "service_name": "turn_on", "entity_id": "switch.tv",
+        }]),
+        report_execution=AsyncMock(side_effect=ElysiumApiError("offline")),
+    )
+    store = SimpleNamespace(async_save=AsyncMock())
+    coordinator = object.__new__(ElysiumExecutionCoordinator)
+    coordinator._api = api
+    coordinator._execution_journal = {}
+    coordinator._execution_journal_store = store
+    coordinator._call_service = AsyncMock()
+
+    assert await coordinator._process_pending_executions() == 1
+    coordinator._call_service.assert_awaited_once()
+    store.async_save.assert_awaited_once()
+    assert "execution-1" in coordinator._execution_journal
+
+    api.report_execution.side_effect = None
+    await coordinator._process_pending_executions()
+    coordinator._call_service.assert_awaited_once()
+    api.report_execution.assert_awaited_with("execution-1", True, None)
 
 
 def test_expected_reward_states_match_backend_contract():

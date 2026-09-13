@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import timedelta
 from typing import Any
 
@@ -44,6 +45,8 @@ class ElysiumExecutionCoordinator(DataUpdateCoordinator[dict[str, int]]):
         hass: HomeAssistant,
         api: ElysiumApi,
         poll_interval: timedelta = FALLBACK_POLL_INTERVAL,
+        execution_journal: dict[str, float] | None = None,
+        execution_journal_store=None,
     ) -> None:
         super().__init__(
             hass,
@@ -52,6 +55,8 @@ class ElysiumExecutionCoordinator(DataUpdateCoordinator[dict[str, int]]):
             update_interval=poll_interval,
         )
         self._api = api
+        self._execution_journal = execution_journal if execution_journal is not None else {}
+        self._execution_journal_store = execution_journal_store
         self._remove_keepalive_listener = self.async_add_listener(
             self._handle_coordinator_update
         )
@@ -158,6 +163,12 @@ class ElysiumExecutionCoordinator(DataUpdateCoordinator[dict[str, int]]):
             execution_id = execution.get("execution_id")
             if execution_id is None:
                 continue
+            if execution_id in self._execution_journal:
+                await self._report_safely(
+                    self._api.report_execution, execution_id, True, None
+                )
+                done += 1
+                continue
             try:
                 await self._call_service(execution)
             except Exception as error:  # noqa: BLE001
@@ -167,12 +178,24 @@ class ElysiumExecutionCoordinator(DataUpdateCoordinator[dict[str, int]]):
                 )
                 continue
 
+            # Persist before acknowledging the backend. If the acknowledgement
+            # is lost, a later lease may deliver the same execution again; the
+            # journal turns that delivery into report-only recovery.
+            await self._remember_execution(execution_id)
             await self._report_safely(
                 self._api.report_execution, execution_id, True, None
             )
             done += 1
 
         return done
+
+    async def _remember_execution(self, execution_id: str) -> None:
+        self._execution_journal[str(execution_id)] = time.time()
+        while len(self._execution_journal) > 2048:
+            oldest = next(iter(self._execution_journal))
+            self._execution_journal.pop(oldest, None)
+        if self._execution_journal_store is not None:
+            await self._execution_journal_store.async_save(self._execution_journal)
 
     async def _call_service(self, command: dict[str, Any]) -> None:
         domain = command.get("service_domain")

@@ -18,6 +18,7 @@ from .const import (
     DOMAIN,
     RULES_STORAGE_KEY,
     HELPERS_STORAGE_KEY,
+    EXECUTION_JOURNAL_STORAGE_KEY,
     STORAGE_VERSION,
 )
 from .coordinator import ElysiumExecutionCoordinator
@@ -30,8 +31,10 @@ PLATFORMS = ["switch", "number", "select", "text", "button", "sensor"]
 async def async_setup_entry(hass: HomeAssistant, entry):
     rule_store = Store(hass, STORAGE_VERSION, RULES_STORAGE_KEY)
     helper_store = Store(hass, STORAGE_VERSION, HELPERS_STORAGE_KEY)
+    execution_journal_store = Store(hass, STORAGE_VERSION, EXECUTION_JOURNAL_STORAGE_KEY)
     rules = await rule_store.async_load() or {}
     helpers = await helper_store.async_load() or {}
+    execution_journal = await execution_journal_store.async_load() or {}
 
     for helper_id, record in helpers.items():
         record.setdefault("helper_id", helper_id)
@@ -40,7 +43,7 @@ async def async_setup_entry(hass: HomeAssistant, entry):
             record["state"] = bool(record.pop("is_on"))
         record.setdefault("config", {})
         record.setdefault("desired_version", 1)
-        record.setdefault("integration_version", "0.7.0")
+        record.setdefault("integration_version", "0.8.0")
 
     hass.data[DOMAIN] = {
         "rules": rules,
@@ -49,6 +52,8 @@ async def async_setup_entry(hass: HomeAssistant, entry):
         "helper_store": helper_store,
         "entities": {},
         "add_helper": {},
+        "execution_journal": execution_journal,
+        "execution_journal_store": execution_journal_store,
     }
     await helper_store.async_save(helpers)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -97,7 +102,7 @@ async def async_setup_entry(hass: HomeAssistant, entry):
             "config": payload.get("config", {}),
             "state": payload.get("state"),
             "desired_version": desired_version,
-            "integration_version": "0.7.0",
+            "integration_version": "0.8.0",
         }
         helpers[helper_id] = record
         await helper_store.async_save(helpers)
@@ -300,7 +305,12 @@ async def _async_start_execution(hass: HomeAssistant, entry) -> None:
         behavior_base_url=config.get(CONF_BEHAVIOR_URL) or DEFAULT_BEHAVIOR_URL,
         agent_token=agent_token,
     )
-    coordinator = ElysiumExecutionCoordinator(hass, api)
+    coordinator = ElysiumExecutionCoordinator(
+        hass,
+        api,
+        execution_journal=hass.data[DOMAIN]["execution_journal"],
+        execution_journal_store=hass.data[DOMAIN]["execution_journal_store"],
+    )
     hass.data[DOMAIN]["coordinator"] = coordinator
 
     # Zámerne async_refresh a nie async_config_entry_first_refresh: tá druhá
