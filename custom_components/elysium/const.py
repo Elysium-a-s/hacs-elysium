@@ -1,6 +1,7 @@
 DOMAIN = "elysium"
 RULES_STORAGE_KEY = "elysium.rules"
 HELPERS_STORAGE_KEY = "elysium.helpers"
+EXECUTION_JOURNAL_STORAGE_KEY = "elysium.execution_journal"
 STORAGE_VERSION = 1
 
 # Konfigurácia vykonávacej slučky (ELYSIUM-42).
