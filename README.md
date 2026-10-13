@@ -9,6 +9,12 @@ internet — which a LAN hub is not.
 
 Without it installed, a `local` household has one mechanism instead of three.
 
+The server-side central-unit and device relationships are described in the
+[PostgreSQL ER index](https://github.com/Elysium-a-s/PostgreSQL/blob/main/docs/er-diagrams/README.md)
+and the [Confluence `integration` model](https://sarockylukas.atlassian.net/wiki/spaces/Elysium/pages/36208731).
+This integration's config entries and local execution state follow the Home
+Assistant lifecycle described below; they are not PostgreSQL tables.
+
 ## Install
 
 **HACS → ⋮ → Custom repositories** → add `Elysium-a-s/hacs-elysium`,
